@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ห้องเรียน Low Poly 3D</title>
+<style>
+:root{--bg:#fff8ee;--ink:#4a3b2a;--pri:#ff8a5c}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#2a2433;--ink:#fbeedd;--pri:#ff9d73}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:#cfe8ff;font-family:'Segoe UI',Tahoma,sans-serif;touch-action:none}
+canvas{display:block}
+#menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(40,30,60,.55);z-index:10;padding:16px}
+.card{background:var(--bg);color:var(--ink);border-radius:20px;padding:26px 30px;max-width:420px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+.card h1{margin:0 0 6px;font-size:26px}
+.card p{margin:6px 0;font-size:14px;line-height:1.6}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;text-align:left;font-size:13px;margin:12px 0}
+kbd{background:var(--pri);color:#fff;border-radius:6px;padding:1px 8px;font-weight:700}
+button{font:inherit;font-weight:700;border:0;border-radius:14px;padding:10px 22px;background:var(--pri);color:#fff;cursor:pointer;margin:4px}
+button:hover{filter:brightness(1.08)}
+#hud{position:fixed;top:max(10px,env(safe-area-inset-top));right:10px;z-index:5;display:none}
+#hud button{padding:8px 14px;font-size:13px}
+#cross{position:fixed;left:50%;top:50%;width:8px;height:8px;margin:-4px;border-radius:50%;background:rgba(255,255,255,.85);border:1px solid rgba(0,0,0,.4);display:none;z-index:4;pointer-events:none}
+#joy{position:fixed;left:24px;bottom:max(24px,env(safe-area-inset-bottom));width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.3);border:2px solid rgba(255,255,255,.7);display:none;z-index:6}
+#knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:var(--pri)}
+#tb{position:fixed;right:24px;bottom:max(24px,env(safe-area-inset-bottom));display:none;z-index:6}
+#tb button{width:64px;height:64px;border-radius:50%;padding:0}
+</style>
+</head>
+<body>
+<div id="menu"><div class="card">
+<h1>🏫 ห้องเรียน Low Poly</h1>
+<p>เดินสำรวจห้องเรียน 3 มิติได้อย่างอิสระ</p>
+<div class="keys"><kbd>W A S D</kbd><span>เดิน หน้า/ซ้าย/ถอย/ขวา</span><kbd>เมาส์</kbd><span>หมุนมุมมอง</span><kbd>Shift</kbd><span>วิ่ง</span><kbd>Space</kbd><span>กระโดด</span><kbd>Esc</kbd><span>เปิดเมนู</span></div>
+<p style="font-size:12px;opacity:.8">มือถือ: จอยสติ๊กซ้ายเดิน · ลากนิ้วขวาเพื่อหมุนมุมมอง</p>
+<button id="start">▶ Start</button><button id="arm" style="display:none">🥽 โหมด AR</button>
+</div></div>
+<div id="hud"><button id="reset">⟲ Reset</button><button id="menub">☰</button></div>
+<div id="cross"></div>
+<div id="joy"><div id="knob"></div></div>
+<div id="tb"><button id="jump">⤒</button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.xr.enabled=true;
+document.body.appendChild(renderer.domElement);
+const scene=new THREE.Scene();
+const SKY=new THREE.Color(0xcfe8ff);scene.background=SKY;
+const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.05,100);
+camera.rotation.order='YXZ';
+const room=new THREE.Group();scene.add(room);
+
+const mat=(c,o={})=>new THREE.MeshStandardMaterial(Object.assign({color:c,flatShading:true,roughness:.85},o));
+const boxes=[]; // collision AABBs
+function box(w,h,d,c,x,y,z,col,o){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(c,o));
+  m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;room.add(m);
+  if(col)boxes.push({x0:x-w/2,x1:x+w/2,z0:z-d/2,z1:z+d/2,top:y+h/2});
+  return m;
+}
+const HW=5,HD=4,H=3.2;
+
+// พื้น (ลายตารางไม้)
+for(let i=0;i<10;i++)for(let j=0;j<8;j++){
+  box(1,.1,1,(i+j)%2?0xe8c597:0xdeb887,-HW+.5+i,-.05,-HD+.5+j,false);
+}
+// ผนัง
+box(10,H,.2,0xfff1d6,0,H/2,-HD-.1,false);
+box(10,H,.2,0xfff1d6,0,H/2,HD+.1,false);
+box(.2,H,8,0xffe9c2,-HW-.1,H/2,0,false);
+box(.2,H,8,0xffe9c2,HW+.1,H/2,0,false);
+box(10,H*.0+.12,8,0xfff7e6,0,H+.06,0,false); // เพดาน
+box(10,.25,.05,0x7cc6a4,0,.125,-HD+.03,false); // แถบสีผนัง
+// ประตู (ผนังหน้า)
+box(1.1,2.2,.1,0xb5763a,3.2,1.1,HD-.05,false);
+box(1.3,2.4,.06,0x7a4a20,3.2,1.2,HD-.02,false);
+box(.1,.1,.1,0xffd24a,2.8,1.1,HD-.12,false);
+// หน้าต่าง (ผนังซ้ายและขวา)
+function windowAt(x,z,ry){
+  const g=new THREE.Group();g.position.set(x,1.8,z);g.rotation.y=ry;room.add(g);
+  const add=(w,h,d,c,px,py,o)=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(c,o));m.position.set(px,py,0);g.add(m);};
+  add(1.8,1.3,.05,0x9fdcff,0,0,{emissive:0x6ec6ff,emissiveIntensity:.6,transparent:true,opacity:.85});
+  add(1.9,.1,.1,0xffffff,0,.65);add(1.9,.1,.1,0xffffff,0,-.65);
+  add(.1,1.4,.1,0xffffff,-.95,0);add(.1,1.4,.1,0xffffff,.95,0);add(.06,1.3,.08,0xffffff,0,0);add(1.8,.06,.08,0xffffff,0,0);
+}
+[-2,2].forEach(z=>{windowAt(-HW+.01,z,Math.PI/2);windowAt(HW-.01,z,-Math.PI/2);});
+// ไวท์บอร์ด
+box(4,1.7,.06,0x9a6b3a,0,1.85,-HD+.04,false);
+box(3.8,1.5,.04,0xffffff,0,1.85,-HD+.08,false,{roughness:.3});
+box(3.9,.08,.12,0x9a6b3a,0,1.0,-HD+.1,false);
+[[0xe74c3c,-1.2],[0x3498db,-.4]].forEach(([c,x])=>box(.3,.03,.03,c,x,1.06,-HD+.14,false));
+box(1.4,.05,.03,0x3498db,-.6,2.3,-HD+.11,false);box(1.0,.05,.03,0xe74c3c,-.8,2.15,-HD+.11,false);
+// นาฬิกา
+const clock=new THREE.Group();clock.position.set(0,2.85,-HD+.07);room.add(clock);
+const face=new THREE.Mesh(new THREE.CylinderGeometry(.28,.28,.05,12),mat(0xffffff));face.rotation.x=Math.PI/2;clock.add(face);
+const rim=new THREE.Mesh(new THREE.CylinderGeometry(.32,.32,.04,12),mat(0xff8a5c));rim.rotation.x=Math.PI/2;rim.position.z=-.01;clock.add(rim);
+function hand(len,w,c){const p=new THREE.Group();const m=new THREE.Mesh(new THREE.BoxGeometry(w,len,.02),mat(c));m.position.y=len/2;p.add(m);p.position.z=.04;clock.add(p);return p;}
+const hH=hand(.15,.03,0x333333),hM=hand(.22,.02,0x333333);
+
+// โต๊ะ-เก้าอี้นักเรียน 6 ชุด
+const deskC=[0xf4a259,0x5bc0be,0xf25f5c,0x9b8cf0,0xffd166,0x6bcB77];
+const bookC=[0xe74c3c,0x3498db,0x2ecc71,0xf1c40f,0x9b59b6,0xe67e22];
+let n=0;
+for(const x of [-2,2])for(const z of [-.8,.8,2.4]){
+  const c=deskC[n];
+  box(1.1,.06,.6,0xdeb887,x,.74,z,false);
+  box(1.1,.02,.6,c,x,.78,z,false);
+  for(const dx of [-.5,.5])for(const dz of [-.25,.25])box(.05,.72,.05,0x6b6b7b,x+dx,.36,z+dz,false);
+  boxes.push({x0:x-.55,x1:x+.55,z0:z-.3,z1:z+.3,top:.8});
+  // เก้าอี้
+  box(.45,.05,.45,c,x,.45,z+.72,false);
+  box(.45,.4,.05,c,x,.72,z+.94,false);
+  for(const dx of [-.19,.19])for(const dz of [-.19,.19])box(.04,.44,.04,0x6b6b7b,x+dx,.22,z+.72+dz,false);
+  boxes.push({x0:x-.23,x1:x+.23,z0:z+.49,z1:z+.97,top:.48});
+  // หนังสือ
+  box(.3,.05,.22,bookC[n],x-.2,.83,z,false);
+  box(.28,.04,.2,0xffffff,x-.2,.86,z,false);
+  box(.3,.03,.22,bookC[(n+2)%6],x-.2,.895,z,false);
+  box(.2,.01,.28,0xfff7e6,x+.25,.805,z,false); // สมุด
+  n++;
+}
+// โต๊ะครู
+box(1.8,.07,.8,0x8b5a2b,0,.76,-2.9,false);
+box(1.7,.7,.7,0xa36a35,0,.38,-2.9,false);
+boxes.push({x0:-.9,x1:.9,z0:-3.3,z1:-2.5,top:.8});
+// คอมพิวเตอร์
+box(.7,.42,.05,0x222233,.4,1.1,-3.05,false);
+box(.64,.36,.02,0x4fc3f7,.4,1.1,-3.02,false,{emissive:0x2196f3,emissiveIntensity:.7});
+box(.1,.15,.08,0x222233,.4,.9,-3.05,false);
+box(.4,.02,.14,0xdddddd,.4,.81,-2.75,false);
+box(.12,.03,.08,0xffffff,.9*.7,.82,-2.75,false);
+// หนังสือบนโต๊ะครู + แก้วดินสอ
+box(.3,.06,.22,0xe74c3c,-.5,.83,-2.9,false);box(.28,.05,.2,0x3498db,-.5,.89,-2.9,false);
+box(.1,.14,.1,0xffffff,-.1,.84,-3.1,false);box(.02,.1,.02,0xf1c40f,-.1,.95,-3.1,false);
+// เก้าอี้ครู
+box(.5,.06,.5,0x2c3e50,0,.5,-2.25,false);box(.5,.5,.06,0x2c3e50,0,.8,-2.0,false);box(.06,.5,.06,0x555,0,.25,-2.25,false);
+boxes.push({x0:-.27,x1:.27,z0:-2.5,z1:-1.98,top:.53});
+// ชั้นหนังสือ
+box(.4,1.8,1.6,0xa36a35,-HW+.3,.9,-2.6,true);
+[.4,.9,1.4].forEach((y,i)=>{for(let k=0;k<5;k++)box(.25,.3,.1,[0xe74c3c,0x3498db,0xf1c40f,0x2ecc71,0x9b59b6][(k+i)%5],-HW+.45,y+.2,-3.2+k*.3,false);});
+// หลอดไฟ
+const lamps=[];
+[[-2.5,-1.5],[2.5,-1.5],[-2.5,1.8],[2.5,1.8]].forEach(([x,z],i)=>{
+  box(.04,.35,.04,0x555566,x,H-.15,z,false);
+  box(.7,.07,.28,0xffffff,x,H-.36,z,false,{emissive:0xfff2b3,emissiveIntensity:1});
+  const L=new THREE.PointLight(0xfff0cc,.55,9);L.position.set(x,H-.5,z);
+  if(i<2){L.castShadow=true;L.shadow.mapSize.set(512,512);}
+  room.add(L);lamps.push(L);
+});
+scene.add(new THREE.HemisphereLight(0xffffff,0xffd9a8,.55));
+const sun=new THREE.DirectionalLight(0xfff4e0,.5);sun.position.set(-8,6,4);scene.add(sun);
+// ถังขยะ + ต้นไม้
+box(.3,.4,.3,0x5bc0be,-HW+.4,.2,3.3,true);
+box(.3,.3,.3,0xc0785a,HW-.4,.15,3.3,true);
+box(.34,.5,.34,0x4caf50,HW-.4,.55,3.3,false);box(.22,.3,.22,0x66bb6a,HW-.4,.9,3.3,false);
+
+// ---------- ผู้เล่น / ควบคุม ----------
+const START={x:0,z:3.0};
+const P={x:START.x,y:0,z:START.z,vy:0,yaw:0,pitch:0};
+const R=.3,EYE=1.6;
+const keys={};let playing=false,inXR=false;
+const isTouch=matchMedia('(pointer:coarse)').matches||'ontouchstart' in window;
+addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space')e.preventDefault();});
+addEventListener('keyup',e=>keys[e.code]=false);
+addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
+function look(dx,dy){P.yaw-=dx;P.pitch=Math.max(-1.4,Math.min(1.4,P.pitch-dy));}
+document.addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement)look(e.movementX*.0022,e.movementY*.0022);});
+function show(on){$('menu').style.display=on?'flex':'none';$('hud').style.display=on?'none':'block';$('cross').style.display=(!on&&!isTouch)?'block':'none';
+  $('joy').style.display=$('tb').style.display=(!on&&isTouch)?'block':'none';}
+function begin(){playing=true;show(false);
+  if(!isTouch)renderer.domElement.requestPointerLock&&renderer.domElement.requestPointerLock();}
+document.addEventListener('pointerlockchange',()=>{if(!isTouch&&!inXR&&document.pointerLockElement!==renderer.domElement&&playing){playing=false;show(true);}});
+$('start').onclick=begin;
+$('menub').onclick=()=>{playing=false;show(true);};
+renderer.domElement.addEventListener('click',()=>{if(playing&&!isTouch&&document.pointerLockElement!==renderer.domElement)renderer.domElement.requestPointerLock();});
+function reset(){Object.assign(P,{x:START.x,y:0,z:START.z,vy:0,yaw:0,pitch:0});}
+$('reset').onclick=reset;
+// มือถือ: จอยสติ๊ก + ลากหมุนมุมมอง
+const joy={x:0,y:0};let joyId=null,lookId=null,lx=0,ly=0;
+const jEl=$('joy'),kEl=$('knob');
+function joyMove(t){const r=jEl.getBoundingClientRect();let dx=t.clientX-(r.left+60),dy=t.clientY-(r.top+60);const m=Math.hypot(dx,dy);if(m>50){dx*=50/m;dy*=50/m;}kEl.style.left=40+dx+'px';kEl.style.top=40+dy+'px';joy.x=dx/50;joy.y=dy/50;}
+jEl.addEventListener('touchstart',e=>{e.preventDefault();joyId=e.changedTouches[0].identifier;joyMove(e.changedTouches[0]);},{passive:false});
+document.addEventListener('touchstart',e=>{if(!playing)return;for(const t of e.changedTouches){if(t.target.closest('#joy,#tb,#hud'))continue;if(lookId===null){lookId=t.identifier;lx=t.clientX;ly=t.clientY;}}},{passive:true});
+document.addEventListener('touchmove',e=>{for(const t of e.changedTouches){if(t.identifier===joyId)joyMove(t);else if(t.identifier===lookId){look((t.clientX-lx)*.005,(t.clientY-ly)*.005);lx=t.clientX;ly=t.clientY;}}},{passive:true});
+document.addEventListener('touchend',e=>{for(const t of e.changedTouches){if(t.identifier===joyId){joyId=null;joy.x=joy.y=0;kEl.style.left=kEl.style.top='40px';}if(t.identifier===lookId)lookId=null;}});
+$('jump').addEventListener('touchstart',e=>{e.preventDefault();keys.Space=true;setTimeout(()=>keys.Space=false,120);},{passive:false});
+
+function blocked(x,z,y){
+  if(x<-HW+R||x>HW-R||z<-HD+R||z>HD-R)return true;
+  for(const b of boxes)if(y<b.top-.1&&x>b.x0-R&&x<b.x1+R&&z>b.z0-R&&z<b.z1+R)return true;
+  return false;
+}
+function groundAt(x,z,y){
+  let g=0;
+  for(const b of boxes)if(x>b.x0-R*.6&&x<b.x1+R*.6&&z>b.z0-R*.6&&z<b.z1+R*.6&&b.top<=y+.15&&b.top>g)g=b.top;
+  return g;
+}
+function update(dt){
+  let f=(keys.KeyW||keys.ArrowUp?1:0)-(keys.KeyS||keys.ArrowDown?1:0)-joy.y;
+  let s=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0)+joy.x;
+  const m=Math.hypot(f,s);if(m>1){f/=m;s/=m;}
+  const sp=(keys.ShiftLeft||keys.ShiftRight?5.5:2.8);
+  const sin=Math.sin(P.yaw),cos=Math.cos(P.yaw);
+  const vx=(-sin*f+cos*s)*sp*dt,vz=(-cos*f-sin*s)*sp*dt;
+  if(!blocked(P.x+vx,P.z,P.y))P.x+=vx;
+  if(!blocked(P.x,P.z+vz,P.y))P.z+=vz;
+  const g=groundAt(P.x,P.z,P.y);
+  if(keys.Space&&P.y<=g+.001)P.vy=4.2;
+  P.vy-=12*dt;P.y+=P.vy*dt;
+  if(P.y<=g){P.y=g;P.vy=0;}
+  if(P.y>H-EYE-.1){P.y=H-EYE-.1;P.vy=Math.min(P.vy,0);}
+  camera.position.set(P.x,P.y+EYE,P.z);
+  camera.rotation.set(P.pitch,P.yaw,0);
+}
+// ---------- AR ----------
+let xrSession=null;
+if(navigator.xr&&navigator.xr.isSessionSupported){
+  navigator.xr.isSessionSupported('immersive-ar').then(ok=>{if(ok)$('arm').style.display='inline-block';}).catch(()=>{});
+}
+$('arm').onclick=async()=>{
+  try{
+    xrSession=await navigator.xr.requestSession('immersive-ar',{optionalFeatures:['local-floor']});
+    renderer.xr.setReferenceSpaceType('local');
+    await renderer.xr.setSession(xrSession);
+    inXR=true;playing=false;scene.background=null;
+    room.scale.setScalar(.12);room.position.set(0,-.6,-1.2);
+    $('menu').style.display='none';$('hud').style.display='none';
+    xrSession.addEventListener('end',()=>{inXR=false;scene.background=SKY;room.scale.setScalar(1);room.position.set(0,0,0);show(true);});
+  }catch(e){alert('ไม่สามารถเริ่มโหมด AR บนอุปกรณ์นี้ได้');}
+};
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+// ---------- วนลูป ----------
+const clk=new THREE.Clock();
+camera.position.set(P.x,EYE,P.z);
+renderer.setAnimationLoop(()=>{
+  const dt=Math.min(clk.getDelta(),.05);
+  const d=new Date(),mi=d.getMinutes()+d.getSeconds()/60,hr=(d.getHours()%12)+mi/60;
+  hM.rotation.z=-mi/60*Math.PI*2;hH.rotation.z=-hr/12*Math.PI*2;
+  if(!inXR&&(playing||true)){ if(playing)update(dt); else{camera.position.set(P.x,P.y+EYE,P.z);camera.rotation.set(P.pitch,P.yaw,0);} }
+  renderer.render(scene,camera);
+});
+</script>
+</body>
+</html>
